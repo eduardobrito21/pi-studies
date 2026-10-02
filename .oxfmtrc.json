@@ -1,0 +1,18 @@
+{
+  "ignorePatterns": [
+    "dist/**",
+    "server/generated/**",
+    "tools/oxlint/anti-slop/**",
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**"
+  ]
+}
