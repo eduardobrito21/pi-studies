@@ -1,5 +1,9 @@
 # M1.2 — PostgreSQL layout for durable agent state
 
+Studying the vocabulary? See the [table-by-table study guide](pi-m1.2-study.md),
+[interactive commit walkthrough](pi-m1.2-study.html), and
+[runnable offline example](examples/durable-records.ts).
+
 ## One migration history, two runtime APIs
 
 ```text

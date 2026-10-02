@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M1.2 · Durable state, one commit at a time</title>
+    <link rel="stylesheet" href="pi-m1.2-study.css" />
+    <script src="pi-m1.2-study.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">PI STUDIES / M1.2 / LOCAL LEARNING LAB</p>
+        <h1>A chat is only part<br />of the agent's memory.</h1>
+        <p class="intro">
+          Follow one request through eight tables. Separate what was said, what is running, what was
+          accepted, and what state changed.
+        </p>
+        <nav aria-label="Study resources">
+          <a href="pi-m1.2-study.md">Detailed table-by-table guide</a>
+          <a href="examples/durable-records.ts">Runnable TypeScript source</a>
+          <a href="pi-m1.2.md">Original milestone</a>
+        </nav>
+      </header>
+      <aside class="notice">
+        Offline illustration, not a database viewer. No model calls or credentials. The runnable
+        example uses real pi-durable MemoryStorage; this page shows the same story as static
+        snapshots.
+      </aside>
+      <section aria-labelledby="vocabulary">
+        <h2 id="vocabulary">First, four words</h2>
+        <div class="vocabulary">
+          <article>
+            <h3>Record</h3>
+            <p>
+              A typed persisted fact about an object. A task record describes work, not a chat
+              message.
+            </p>
+          </article>
+          <article>
+            <h3>Row</h3>
+            <p>
+              The SQL representation. Usually a complete serialized record plus indexed mirror
+              columns.
+            </p>
+          </article>
+          <article>
+            <h3>Entry</h3>
+            <p>
+              An immutable transcript event. It may contain model messages, display data, or context
+              controls.
+            </p>
+          </article>
+          <article>
+            <h3>Document</h3>
+            <p>
+              Structured state: an identity and lifecycle, with content reconstructed from bases and
+              deltas.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section aria-labelledby="walkthrough">
+        <div class="section-heading">
+          <h2 id="walkthrough">One request, four atomic commits</h2>
+          <span class="badge">ID ≠ commit sequence</span>
+        </div>
+        <div class="controls">
+          <button id="previous" type="button">← Previous</button>
+          <button id="play" type="button" aria-pressed="false">Play commits</button>
+          <button id="next" type="button">Next →</button>
+          <button id="reset" type="button">Reset</button>
+          <label for="step">Commit</label>
+          <input id="step" type="range" min="0" max="4" value="0" />
+        </div>
+        <div class="story" aria-live="polite" aria-atomic="true">
+          <p id="sequence" class="eyebrow"></p>
+          <h3 id="step-title"></h3>
+          <p id="step-description"></p>
+        </div>
+        <p class="legend">
+          <span class="dot"></span> Highlighted tables are touched in this commit. Values below are
+          summaries, not full SQL rows. Allocation is shown separately from commit identity.
+        </p>
+        <div class="tables">
+          <article id="metadata" class="table-card">
+            <p class="category">INFRASTRUCTURE</p>
+            <h3>durable_metadata</h3>
+            <p>
+              The format label and next allocation candidates. One row for the storage namespace.
+            </p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>Why it exists</summary>
+              <p>
+                ID 1 is reserved for the root. IDs start at 2; commit seq starts at 1. Neither is a
+                timestamp or per-table auto-increment. Counters can have gaps. The migration
+                reserves the root but does not insert its conversation.
+              </p>
+            </details>
+          </article>
+          <article id="claims" class="table-card">
+            <p class="category">INFRASTRUCTURE</p>
+            <h3>record_ids</h3>
+            <p>One immutable global ledger: this number belongs to this record type.</p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>Why it exists</summary>
+              <p>
+                Entry 4 and task 4 cannot be different objects. Deferred composite foreign keys
+                require a matching claim. Document revisions do not mint new IDs: they use document
+                ID + commit seq.
+              </p>
+            </details>
+          </article>
+          <article id="conversations" class="table-card">
+            <p class="category">IDENTITY / IMMUTABLE</p>
+            <h3>conversations</h3>
+            <p>
+              The transcript scope. Optional parent ancestry and task ownership are separate edges.
+            </p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>What is a fork?</summary>
+              <p>
+                A parent edge inherits history through one inclusive entry cutoff. An owner edge
+                names the creator task. Forks can be ownerless; owned conversations need not be
+                forks. Fork-aware reads follow ancestry rather than copying every entry.
+              </p>
+            </details>
+          </article>
+          <article id="entries" class="table-card">
+            <p class="category">TRANSCRIPT / IMMUTABLE</p>
+            <h3>entries</h3>
+            <p>
+              What happened. Model-facing messages and application-facing data are separate
+              payloads.
+            </p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>Not just chat messages</summary>
+              <p>
+                An entry can be bookkeeping with no model messages. A head marker selects the first
+                active-context entry, not the newest message. New entries can omit/replace earlier
+                model contributions without rewriting stored history.
+              </p>
+            </details>
+          </article>
+          <article id="tasks" class="table-card">
+            <p class="category">EXECUTION / REPLACEABLE</p>
+            <h3>tasks</h3>
+            <p>The agent's work: input, definition version, checkpoint, ownership and outcome.</p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>States vs outcomes</summary>
+              <p>
+                States: pending, running, waiting, completing, terminal. Successful outcome:
+                completed inside terminal state. Checkpoints support resumable progress, not an
+                automatic exactly-once guarantee for external side effects.
+              </p>
+            </details>
+          </article>
+          <article id="submissions" class="table-card">
+            <p class="category">ADMISSION / REPLACEABLE</p>
+            <h3>submissions</h3>
+            <p>A receipt: accepted, placed into the transcript, answered, or left unanswered.</p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>Receipt ≠ input entry</summary>
+              <p>
+                Queued input may have no entry. Input goes queued → placed → done, or unanswered.
+                Passive writes go queued → done without an answer. Request IDs support
+                conversation-scoped retry lookup; Session serializes deduplication, not a unique
+                hash constraint.
+              </p>
+            </details>
+          </article>
+          <article id="documents" class="table-card">
+            <p class="category">STATE IDENTITY / LIFECYCLE</p>
+            <h3>documents</h3>
+            <p>An incarnation of a typed state object at kind + scope + optional key.</p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>Address ≠ incarnation</summary>
+              <p>
+                Retire ID 5, then recreate the same address: it gets a new ID. Session scope uses
+                owner 0. A singleton and family member with empty key are different.
+                created_at/retired_at are commit sequences, not dates.
+              </p>
+            </details>
+          </article>
+          <article id="revisions" class="table-card">
+            <p class="category">STATE CONTENT / BASE + DELTA</p>
+            <h3>document_revisions</h3>
+            <p>
+              Complete snapshots and ordered Chord operation batches, keyed by document ID + seq.
+            </p>
+            <pre class="snapshot"></pre>
+            <details>
+              <summary>How reads work</summary>
+              <p>
+                Choose the latest base at or before the target commit. Replay later delta batches in
+                order. Definition version is not commit seq. Latest-only history may be pruned;
+                rewindable history supports as-of reads.
+              </p>
+            </details>
+          </article>
+        </div>
+      </section>
+      <section aria-labelledby="replay">
+        <h2 id="replay">A document read is reconstruction</h2>
+        <div class="replay">
+          <pre>
+BASE · seq 3
+{"explained": 0}</pre>
+          <span aria-hidden="true">+</span>
+          <pre>
+DELTA · seq 4
+[["s", ["explained"], 1]]</pre>
+          <span aria-hidden="true">=</span>
+          <pre>
+CURRENT VALUE
+{"explained": 1}</pre>
+        </div>
+        <p>
+          <code>s</code> is a real Chord “set” operation, not JSON Patch. At seq 3 the value is
+          still zero. The document's identity remains 5 at both points.
+        </p>
+      </section>
+      <section aria-labelledby="boundaries">
+        <h2 id="boundaries">Two kinds of “task,” two runtime APIs</h2>
+        <div class="vocabulary">
+          <article>
+            <h3>public."Task"</h3>
+            <p>
+              A Kanban card with title, description, assignee and board status. String ID. Use the
+              Zod + Effect service in <code>server/tasks.ts</code>, then Prisma Client.
+            </p>
+          </article>
+          <article>
+            <h3>agent.tasks</h3>
+            <p>
+              Execution state for model/tool work. Numeric ID. Owned by the durable Storage
+              implementation. Agent Prisma models use <code>@@ignore</code>; migration ownership
+              does not imply Client CRUD.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section aria-labelledby="sample">
+        <h2 id="sample">Try the actual code</h2>
+        <pre>bun docs/m1.2/examples/durable-records.ts</pre>
+        <p>
+          The source demonstrates typed ID allocation, atomic StorageWrite batches, a
+          queued/placed/done receipt, terminal task replacement, historical document reads and
+          request lookup. It uses no PostgreSQL and does not run a Harness.
+        </p>
+        <details>
+          <summary>What would PostgreSQL store?</summary>
+          <pre>
+// Full record: JSON-encoded TEXT
+record = JSON.stringify(task)
+
+// Arbitrary indexed identity: also encoded
+kind = JSON.stringify(task.kind)
+
+// Fixed state enum: ordinary text
+status = task.state.status
+
+// Read-only, collision-safe SQL lookup
+SELECT record FROM agent.tasks
+WHERE md5(kind) = md5($1) AND kind = $1
+ORDER BY id;</pre>
+          <p>
+            Hash buckets narrow candidates; exact encoded text is the identity. TEXT preserves
+            escaped NUL/lone surrogates that JSONB cannot. SQL JSON checks validate syntax, not
+            every semantic Pi rule.
+          </p>
+        </details>
+      </section>
+      <footer>
+        Based on this repository's M1.2 migration and pinned pi-durable 1.0.0 types. M1.2 is schema
+        acceptance, not proof of a wired-up running agent. See the detailed guide for implementation
+        boundaries and sources.
+      </footer>
+      <noscript
+        >The controls need JavaScript. All table explanations remain readable; use the detailed
+        Markdown guide for the full sequence.</noscript
+      >
+    </main>
+  </body>
+</html>
