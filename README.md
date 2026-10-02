@@ -36,7 +36,8 @@ Keep the Prisma CLI, client, and adapter versions aligned.
 - Drop changes status; there is **no within-column reordering**. Tasks retain creation order.
 - The editor's status selector provides a non-drag alternative.
 - Postgres volume survives restarts. No sample tasks are inserted automatically.
-- No authentication, deployment setup, or agent framework.
+- No taskboard authentication or deployment setup. The pi SDK is installed for a
+  local connection study; there are no agent routes or task tools yet.
 
 ## Commands
 
@@ -54,6 +55,51 @@ Keep the Prisma CLI, client, and adapter versions aligned.
 
 **Reset all data:** `docker compose down -v`, then `bun run db:up && bun run db:deploy`.
 The frontend build is not a standalone production server; use Vite for this local study.
+
+## M1.1 — pi packages and existing-login integration
+
+`@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, and
+`@earendil-works/pi-coding-agent` are pinned together to **1.0.0**.
+`bun.lock` is the dependency lockfile; use `bun install --frozen-lockfile` to
+reproduce the install. The legacy npm lockfile has been removed to avoid two
+conflicting dependency snapshots.
+
+Authenticate in the pi CLI with `/login`, then select and save a default model
+with `/model` (Ctrl+S). Verify that login from this project:
+
+```sh
+bun run pi:smoke
+```
+
+The check reads pi's saved default provider/model, requires a stored credential
+for that provider, and makes one small live request expecting `PI_LOGIN_OK`.
+This consumes provider quota; it is **not** part of `bun test` or `bun run check`.
+To select a different model without changing your pi defaults:
+
+```sh
+TASKBOARD_PI_PROVIDER=openai TASKBOARD_PI_MODEL=gpt-6.1-sol bun run pi:smoke
+```
+
+Credentials stay in `~/.pi/agent/auth.json`, or the agent directory selected by
+`PI_CODING_AGENT_DIR`. They are not copied into `.env`, the database, or this
+repository, and the check does not print tokens or provider error bodies.
+The SDK handles OAuth refresh and may update pi's existing credential file.
+No separate taskboard login or API key is needed. Keep pi's auth file private.
+
+The session is in-memory, has **no tools**, loads no extensions, skills, prompt
+templates, or project instructions, and is disposed after the check. Automatic
+retries, compaction, and cache warming are disabled; a 60-second timer aborts the
+prompt. Only the fixed connection-test prompt is sent, not board data. Model
+catalog/configuration still comes from pi, including its `models.json`.
+
+On failure, the command exits nonzero. Verify `/login`, save a default with
+`/model`, or set both overrides above. Custom providers that require executable
+extensions are intentionally outside this check's scope.
+
+Verified locally with Bun **1.4.2**, pi **1.0.0**, and the existing OpenAI OAuth
+login using `openai/gpt-6.1-sol`: the SDK returned `PI_LOGIN_OK`.
+Normal tests exercise model validation and isolated session creation without
+using real credentials or making provider requests.
 
 ## Where the future agent layer goes
 

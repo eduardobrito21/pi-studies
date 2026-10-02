@@ -8,6 +8,7 @@
     "dev:api": "bun --watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "test": "bun test",
+    "pi:smoke": "bun server/pi-smoke.ts",
     "lint": "oxlint --deny-warnings",
     "lint:fix": "oxlint --fix",
     "format": "oxfmt --write .",
@@ -22,6 +23,9 @@
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "@tailwindcss/vite": "^4.1.0",
