@@ -1,120 +1,140 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import {
-  createAgentSession,
-  createExtensionRuntime,
-  getAgentDir,
-  ModelRuntime,
-  type ResourceLoader,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+  AssistantEntry,
+  createRegistry,
+  Harness,
+  MemoryStorage,
+  type Storage,
+} from "@earendil-works/pi-durable";
 import { Effect } from "effect";
-import { join } from "node:path";
-import { z } from "zod";
+import { PiSetupError, type PiModelSelection } from "./pi-models";
 
-export const smokeModelSchema = z.strictObject({
-  provider: z.string().trim().min(1),
-  model: z.string().trim().min(1),
-});
+export const smokeReply = "PI_DURABLE_OK";
 
-const reply = "PI_LOGIN_OK";
+export const smokePrompt = `Reply with exactly ${smokeReply}`;
 
-// Reuse credentials, not CLI extensions, skills, instructions, or filesystem tools.
-const resources: ResourceLoader = {
-  getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-  getSkills: () => ({ skills: [], diagnostics: [] }),
-  getPrompts: () => ({ prompts: [], diagnostics: [] }),
-  getThemes: () => ({ themes: [], diagnostics: [] }),
-  getAgentsFiles: () => ({ agentsFiles: [] }),
-  getSystemPrompt: () => "You are a connection test. Return only the exact text requested.",
-  getSystemPromptSource: () => undefined,
-  getAppendSystemPrompt: () => [],
-  getAppendSystemPromptSources: () => [],
-  extendResources: () => {},
-  reload: async () => {},
-};
+// One pi-durable loop. MemoryStorage is ONLY a disposable M1.1 compatibility test.
+// The application will use PostgreSQL after the storage milestones are complete.
+export function runDurableSmoke(models: Models, selection: PiModelSelection, storage?: Storage) {
+  return Effect.tryPromise({
+    try: async (signal) => {
+      const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
 
-export function createSmokeSession(modelRuntime: ModelRuntime, model: Model<Api>) {
-  return createAgentSession({
-    modelRuntime,
-    model,
-    thinkingLevel: "off",
-    tools: [],
-    noTools: "all",
-    resourceLoader: resources,
-    sessionManager: SessionManager.inMemory(),
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 60_000 } },
-      cacheWarming: "off",
-    }),
+      const harness = await Harness.open(
+        storage ?? new MemoryStorage(),
+        {
+          models,
+          registry: createRegistry(),
+          settings: {
+            stream: { timeoutMs: 10_000, maxRetries: 0, cacheRetention: "none" },
+            retry: { enabled: false, maxRetries: 0 },
+            compaction: { enabled: false },
+            toolExecution: "sequential",
+          },
+        },
+        context,
+      );
+
+      try {
+        const root = await harness.root(context, {
+          agent: {
+            model: { provider: selection.provider, modelId: selection.model },
+            thinkingLevel: "off",
+            tools: [],
+            extensions: [],
+            instructions: "You are a connection test. Return only the exact text requested.",
+          },
+        });
+
+        const submission = await root.submit(
+          { type: "input", content: smokePrompt, requestId: "m1.1-smoke" },
+          context,
+        );
+
+        const settled = await submission.wait(context);
+
+        if (settled.status !== "done" || settled.type !== "input") {
+          throw new PiSetupError({ message: "Durable submission did not produce an answer." });
+        }
+
+        const entry = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+        const answer = entry?.model?.[0];
+
+        if (answer?.role !== "assistant" || answer.stopReason !== "stop") {
+          throw new PiSetupError({
+            message: "Durable assistant response did not finish normally.",
+          });
+        }
+
+        let text = "";
+
+        for (const block of answer.content) {
+          if (block.type === "text") {
+            text += block.text;
+          }
+        }
+
+        if (text.trim() !== smokeReply) {
+          throw new PiSetupError({ message: "Durable assistant returned an unexpected response." });
+        }
+
+        const transcript = await root.entries({}, 10, undefined, context);
+        const agent = await root.agent(context);
+
+        return {
+          answer: text.trim(),
+          submissionStatus: settled.status,
+          entryKinds: [...transcript.items].reverse().map((item) => item.kind),
+          toolNames: agent.tools.map((tool) => tool.name),
+          extensionNames: agent.extensions.map((extension) => extension.name),
+        };
+      } finally {
+        // Cancelling a waiter is not cancelling durable work. Closing this disposable
+        // harness stops its scheduler; mandatory cleanup uses a non-cancelled context.
+        await harness.close(BACKGROUND_CONTEXT);
+      }
+    },
+    // Never emit raw provider errors: they can contain request or credential details.
+    catch: (cause) =>
+      cause instanceof PiSetupError
+        ? cause
+        : new PiSetupError({ message: "Pi-durable smoke check failed." }),
   });
 }
 
-export const piSmoke = Effect.tryPromise({
-  try: async () => {
-    const agentDir = getAgentDir();
-    const settings = SettingsManager.create(process.cwd(), agentDir, { projectTrusted: false });
+export function runFauxSmoke() {
+  return Effect.gen(function* () {
+    const faux = fauxProvider();
+    const models = createModels();
 
-    const selection = smokeModelSchema.parse({
-      provider: process.env.TASKBOARD_PI_PROVIDER ?? settings.getDefaultProvider(),
-      model: process.env.TASKBOARD_PI_MODEL ?? settings.getDefaultModel(),
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage(smokeReply)]);
+
+    const result = yield* runDurableSmoke(models, {
+      provider: faux.getModel().provider,
+      model: faux.getModel().id,
     });
 
-    const modelRuntime = await ModelRuntime.create({
-      authPath: join(agentDir, "auth.json"),
-      modelsPath: join(agentDir, "models.json"),
-    });
-
-    const model = modelRuntime.getModel(selection.provider, selection.model);
-
-    if (!model) {
-      throw new Error("Selected model is not in the pi catalog.");
-    }
-
-    // Check credential metadata only; never read or print API keys or OAuth tokens.
-    const credentials = await modelRuntime.listCredentials();
-    const credential = credentials.find((entry) => entry.providerId === selection.provider);
-
-    if (!credential) {
-      throw new Error("No stored pi login for the selected provider.");
-    }
-
-    console.log(`Checking ${model.provider}/${model.id} with stored pi credentials.`);
-    const { session } = await createSmokeSession(modelRuntime, model);
-    const timeout = setTimeout(() => void session.abort(), 60_000);
-
-    try {
-      await session.prompt(`Reply with exactly ${reply}`);
-      const response = session.getLastAssistantText()?.trim();
-      const lastMessage = session.messages.at(-1);
-
-      if (
-        lastMessage?.role !== "assistant" ||
-        lastMessage.stopReason !== "stop" ||
-        response !== reply
-      ) {
-        throw new Error("Pi did not return the expected successful response.");
-      }
-
-      console.log(`Pi existing-login integration verified: ${reply}`);
-    } finally {
-      clearTimeout(timeout);
-      session.dispose();
-    }
-  },
-  // Provider errors may contain request details. Do not emit them or credential values.
-  catch: () => new Error("Pi smoke check failed. Check pi /login, /model, and the selected model."),
-});
+    return { ...result, providerCalls: faux.state.callCount };
+  });
+}
 
 if (import.meta.main) {
   await Effect.runPromise(
-    Effect.match(piSmoke, {
+    Effect.match(Effect.timeout(runFauxSmoke(), "15 seconds"), {
       onFailure: (error) => {
-        console.error(error.message);
+        console.error(
+          error instanceof PiSetupError ? error.message : "Pi-durable smoke timed out.",
+        );
         process.exitCode = 1;
       },
-      onSuccess: () => {},
+      onSuccess: (result) => {
+        console.log(JSON.stringify(result, null, 2));
+        console.log("Pi-durable/faux smoke passed. No credentials or network inference used.");
+      },
     }),
   );
 }

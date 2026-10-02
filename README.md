@@ -58,48 +58,81 @@ The frontend build is not a standalone production server; use Vite for this loca
 
 ## M1.1 — pi packages and existing-login integration
 
-`@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, and
-`@earendil-works/pi-coding-agent` are pinned together to **1.0.0**.
-`bun.lock` is the dependency lockfile; use `bun install --frozen-lockfile` to
-reproduce the install. The legacy npm lockfile has been removed to avoid two
-conflicting dependency snapshots.
+`@earendil-works/pi-durable`, `@earendil-works/pi-ai`, and
+`@earendil-works/chord` are pinned together to **1.0.0**.
+`@earendil-works/pi-coding-agent` **1.0.0** supplies only `ModelRuntime` and the
+credential-directory helper: no coding-agent session or second agent loop.
+The published durable package declares `^1.0.0` compatibility with both ai and
+chord. `bun.lock` resolves these packages to 1.0.0; use
+`bun install --frozen-lockfile`. Bun is the sole package manager/lockfile.
+The durable API is experimental: check installed release declarations and
+implementation, not just upstream main, before extending the integration.
 
-Authenticate in the pi CLI with `/login`, then select and save a default model
-with `/model` (Ctrl+S). Verify that login from this project:
-
-```sh
-bun run pi:smoke
-```
-
-The check reads pi's saved default provider/model, requires a stored credential
-for that provider, and makes one small live request expecting `PI_LOGIN_OK`.
-This consumes provider quota; it is **not** part of `bun test` or `bun run check`.
-To select a different model without changing your pi defaults:
+### Three separate checks
 
 ```sh
-TASKBOARD_PI_PROVIDER=openai TASKBOARD_PI_MODEL=gpt-6.1-sol bun run pi:smoke
+bun run pi:smoke   # Scripted faux provider → pi-durable → committed transcript
+bun run pi:models  # Available model identifiers for existing stored pi logins
 ```
 
-Credentials stay in `~/.pi/agent/auth.json`, or the agent directory selected by
-`PI_CODING_AGENT_DIR`. They are not copied into `.env`, the database, or this
-repository, and the check does not print tokens or provider error bodies.
-The SDK handles OAuth refresh and may update pi's existing credential file.
-No separate taskboard login or API key is needed. Keep pi's auth file private.
+`pi:smoke` makes **no network inference request**, needs no credentials, and
+expects `PI_DURABLE_OK`. It opens one pi-durable Harness, creates one root
+conversation, submits one input, waits for its answer, reads committed entries,
+and closes the Harness. The output shows `pi.user`, `pi.system`, and
+`pi.assistant`, with empty tool/extension lists and one faux-provider call.
+Retries and automatic compaction are disabled. Storage is disposable
+`MemoryStorage` **only for this M1.1 compatibility test**, not application
+persistence or a claim of restart recovery.
 
-The session is in-memory, has **no tools**, loads no extensions, skills, prompt
-templates, or project instructions, and is disposed after the check. Automatic
-retries, compaction, and cache warming are disabled; a 60-second timer aborts the
-prompt. Only the fixed connection-test prompt is sent, not board data. Model
-catalog/configuration still comes from pi, including its `models.json`.
+**Model/provider selection is still unresolved. Ask the user which listed model
+to use before any live inference.** Neither the current coding session nor pi's
+saved defaults choose the taskboard's model. After an explicit choice:
 
-On failure, the command exits nonzero. Verify `/login`, save a default with
-`/model`, or set both overrides above. Custom providers that require executable
-extensions are intentionally outside this check's scope.
+```sh
+TASKBOARD_PI_PROVIDER='<chosen-provider>' TASKBOARD_PI_MODEL='<chosen-model>' bun run pi:check
+```
 
-Verified locally with Bun **1.4.2**, pi **1.0.0**, and the existing OpenAI OAuth
-login using `openai/gpt-6.1-sol`: the SDK returned `PI_LOGIN_OK`.
-Normal tests exercise model validation and isolated session creation without
-using real credentials or making provider requests.
+This validates the pair with Zod, checks the local catalog/config and stored
+credential metadata, then asks Pi whether authentication is configured. It does
+not submit a prompt or prove that a provider will accept a future live request.
+Missing/blank selection, absent credentials, unavailable models, and timeout
+exit nonzero. There is deliberately no live-inference CLI command yet.
+
+Authenticate using the pi CLI's `/login`. Credentials stay in
+`~/.pi/agent/auth.json`, or the directory selected by `PI_CODING_AGENT_DIR`.
+`ModelRuntime` can resolve/refresh OAuth for future durable requests, without
+copying credentials into history, Postgres, `.env`, or browser payloads.
+Enumeration prints only provider/model identifiers and credential type, never
+model definitions, headers, tokens, or raw provider errors. Catalog-network
+refresh is disabled; model configuration comes from pi's `models.json` and the
+installed catalog. Availability checks do not perform inference, but custom
+API-key resolution may execute configured secret commands. Extensions and
+project instructions are never discovered or loaded.
+
+### Agreed architecture and next steps
+
+One backend process, one pi-durable Harness, and one board conversation.
+PostgreSQL will hold both board data and **all durable agent state**:
+M1.2 adds a separate schema, M1.3 implements the pinned `Storage` contract using
+`pg`, and M1.4 gates agent integration on storage conformance. Prisma remains
+responsible for board data; Effect remains the business-operation layer and Zod
+remains authoritative application validation. M1.5 adds read-only board tools
+that reuse `server/tasks.ts`. No chat UI in M1.1.
+
+No approvals/permissions layer, subagents, MCP, shell/filesystem tools, raw-SQL
+agent tools, or autonomous work. The agent manages tasks, **never executes task
+descriptions**. Only explicitly registered task tools will be installed.
+
+The previous coding-agent/live-default-model smoke check was a mistaken
+implementation and has been replaced. Its live success is not evidence that
+the intended durable integration is complete.
+
+Release reference: npm reports durable 1.0.0 gitHead
+`a13d35a742c6ef8462812a28fbe1d8c8b7431c32` (different from the earlier research
+commit `9fba660cf1caca0ade5bea72269352416e595a19`). Implementation is checked against
+`node_modules/@earendil-works/pi-durable/dist` and the release's
+[14-chat example](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/durable/test/examples/14-chat.ts).
+See [the M1.1 walkthrough](docs/pi-m1.1.md) for the Pi/Chord/Effect boundaries.
 
 ## Where the future agent layer goes
 
