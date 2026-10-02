@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../server/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../server/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
   provider = "postgresql"
+  schemas  = ["public", "agent"]
 }
 
 enum TaskStatus {
@@ -13,6 +15,8 @@ enum TaskStatus {
   TODO
   IN_PROGRESS
   DONE
+
+  @@schema("public")
 }
 
 model Task {
@@ -25,4 +29,154 @@ model Task {
   updatedAt   DateTime   @updatedAt
 
   @@index([status])
+  @@schema("public")
+}
+
+// Agent models describe the database layout for Prisma Migrate, not a second
+// business-operation API. @@ignore excludes them from Prisma Client; pg will
+// implement the pinned pi-durable Storage contract in M1.3.
+//
+// Native CHECKs, C collation, generated record-type columns, deferred FKs,
+// immutability triggers and hash-expression indexes are in the SQL migration.
+// Prisma introspects generated record-type columns as nullable with defaults;
+// their actual GENERATED ALWAYS semantics are maintained by native SQL.
+// Serialized records and indexed identities are lossless JSON-encoded TEXT.
+
+/// One storage namespace: root ID 1, next allocation starts at 2, commit Seq at 1.
+model AgentMetadata {
+  singleton            Int    @id @db.SmallInt
+  storageFormatVersion Int    @map("storage_format_version") @db.SmallInt
+  nextId               BigInt @map("next_id")
+  nextSeq              BigInt @map("next_seq")
+
+  @@map("durable_metadata")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Global ID ownership shared by conversations, entries, tasks, submissions and documents.
+model AgentRecordId {
+  id            BigInt              @id
+  recordType    String              @map("record_type")
+  conversations AgentConversation[]
+  entries       AgentEntry[]
+  tasks         AgentTask[]
+  submissions   AgentSubmission[]
+  documents     AgentDocument[]
+
+  @@unique([id, recordType], map: "record_ids_id_record_type_key")
+  @@map("record_ids")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Immutable identity, ancestry and ownership; complete Pi ConversationRecord in record.
+model AgentConversation {
+  id                  BigInt         @id
+  recordType          String?        @default("conversation") @map("record_type")
+  ownerConversationId BigInt?        @map("owner_conversation_id")
+  ownerTaskId         BigInt?        @map("owner_task_id")
+  record              String
+  idClaim             AgentRecordId? @relation(fields: [id, recordType], references: [id, recordType], onDelete: NoAction, onUpdate: NoAction, map: "conversations_id_record_type_fkey")
+
+  @@index([ownerConversationId, id], map: "conversations_by_owner_conversation")
+  @@index([ownerTaskId, id], map: "conversations_by_owner_task")
+  @@map("conversations")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Immutable transcript entry, active-context head marker and atomic commit sequence.
+model AgentEntry {
+  id             BigInt         @id
+  recordType     String?        @default("entry") @map("record_type")
+  conversationId BigInt         @map("conversation_id")
+  head           BigInt?
+  commitSeq      BigInt         @map("commit_seq")
+  record         String
+  idClaim        AgentRecordId? @relation(fields: [id, recordType], references: [id, recordType], onDelete: NoAction, onUpdate: NoAction, map: "entries_id_record_type_fkey")
+
+  @@index([conversationId, id(sort: Desc)], map: "entries_by_conversation")
+  @@index([conversationId, id(sort: Desc)], map: "entry_heads_by_conversation", where: raw("(head IS NOT NULL)"))
+  @@map("entries")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Execution work/checkpoints, NOT the Kanban Task model. Input/state/outcome live in record.
+model AgentTask {
+  id             BigInt         @id
+  recordType     String?        @default("task") @map("record_type")
+  conversationId BigInt         @map("conversation_id")
+  kind           String
+  status         String
+  abortRequested Boolean        @map("abort_requested")
+  background     Boolean
+  record         String
+  idClaim        AgentRecordId? @relation(fields: [id, recordType], references: [id, recordType], onDelete: NoAction, onUpdate: NoAction, map: "tasks_id_record_type_fkey")
+
+  // tasks_by_kind uses md5(kind) + exact comparison; defined in migration SQL.
+  @@index([status, id], map: "tasks_by_status")
+  @@index([conversationId, id], map: "tasks_by_conversation")
+  @@index([abortRequested, id], map: "tasks_by_abort_requested")
+  @@index([background, id], map: "tasks_by_background")
+  @@map("tasks")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Admitted input/write lifecycle plus conversation-scoped request identity for retry lookup.
+model AgentSubmission {
+  id             BigInt         @id
+  recordType     String?        @default("submission") @map("record_type")
+  conversationId BigInt         @map("conversation_id")
+  requestId      String?        @map("request_id")
+  status         String
+  record         String
+  idClaim        AgentRecordId? @relation(fields: [id, recordType], references: [id, recordType], onDelete: NoAction, onUpdate: NoAction, map: "submissions_id_record_type_fkey")
+
+  // submissions_by_request hashes request_id, then checks exact text; in SQL.
+  @@index([conversationId, id], map: "submissions_by_conversation")
+  @@index([status, id], map: "submissions_by_status")
+  @@map("submissions")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Document incarnation and lifecycle; absent key differs from an empty family-member key.
+model AgentDocument {
+  id         BigInt                  @id
+  recordType String?                 @default("document") @map("record_type")
+  kind       String
+  family     Boolean
+  keyValue   String                  @map("key_value")
+  scopeKind  String                  @map("scope_kind")
+  ownerId    BigInt                  @map("owner_id")
+  createdAt  BigInt                  @map("created_at")
+  retiredAt  BigInt?                 @map("retired_at")
+  record     String
+  idClaim    AgentRecordId?          @relation(fields: [id, recordType], references: [id, recordType], onDelete: NoAction, onUpdate: NoAction, map: "documents_id_record_type_fkey")
+  revisions  AgentDocumentRevision[]
+
+  // documents_by_address / documents_by_scope_kind hash arbitrary identities; in SQL.
+  @@index([scopeKind, ownerId, id], map: "documents_by_scope")
+  @@map("documents")
+  @@ignore
+  @@schema("agent")
+}
+
+/// Complete base JSON or ordered Chord delta batch, at a document's atomic commit sequence.
+model AgentDocumentRevision {
+  documentId BigInt        @map("document_id")
+  seq        BigInt
+  kind       String
+  version    BigInt
+  content    String
+  document   AgentDocument @relation(fields: [documentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "document_revisions_document_id_fkey")
+
+  @@id([documentId, seq])
+  @@index([documentId, kind, seq(sort: Desc)], map: "document_revisions_by_kind")
+  @@map("document_revisions")
+  @@ignore
+  @@schema("agent")
 }

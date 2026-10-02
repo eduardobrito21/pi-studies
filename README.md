@@ -12,7 +12,6 @@ cp .env.example .env
 bun install
 bun run db:generate
 bun run db:up
-bun run db:deploy
 bun run dev
 ```
 
@@ -46,14 +45,22 @@ Keep the Prisma CLI, client, and adapter versions aligned.
 | `bun run dev`                           | Frontend and API, with reload                             |
 | `bun run build`                         | Typecheck everything and build the frontend               |
 | `bun test`                              | Validation, task service, and HTTP tests (no DB required) |
-| `bun run db:up`                         | Start Postgres and wait for its healthcheck               |
+| `bun run db:up`                         | Wait for Postgres, then run migrations in Compose         |
 | `bun run db:down`                       | Stop Postgres, keeping data                               |
 | `bun run db:deploy`                     | Apply committed migrations                                |
 | `bun run db:migrate --name your_change` | Create a migration after changing the schema              |
 | `bun run db:generate`                   | Regenerate Prisma Client                                  |
 | `bun run db:studio`                     | Browse data with Prisma Studio                            |
 
-**Reset all data:** `docker compose down -v`, then `bun run db:up && bun run db:deploy`.
+`compose.yaml` includes a one-shot `migrate` service that depends on Postgres
+being healthy. `bun run db:up` waits for Postgres, rebuilds the slim migration
+image when needed, runs it, and returns its exit code. The image contains only
+Node/Bun, OpenSSL, Prisma CLI and dotenv, plus `prisma/` and `prisma.config.ts`—
+not the application dependencies, host `node_modules`, or `.env`.
+Inside Compose the database address is `postgres:5432`; the host uses port 5433.
+`bun run db:deploy` remains available for a manual host-side deploy.
+
+**Reset all data:** `docker compose down -v`, then `bun run db:up`.
 The frontend build is not a standalone production server; use Vite for this local study.
 
 ## M1.1 — pi packages and existing-login integration
@@ -133,6 +140,36 @@ commit `9fba660cf1caca0ade5bea72269352416e595a19`). Implementation is checked ag
 `node_modules/@earendil-works/pi-durable/dist` and the release's
 [14-chat example](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/durable/test/examples/14-chat.ts).
 See [the M1.1 walkthrough](docs/pi-m1.1.md) for the Pi/Chord/Effect boundaries.
+
+## M1.2 — PostgreSQL durable-state schema
+
+**Prisma Migrate owns the migrations for both schemas.** The existing
+`bun run db:deploy` now also creates the separate `agent` namespace; there is
+no second migration runner or migration history. `prisma/schema.prisma` describes
+**both board and agent tables**, using `@@schema` and readable `Agent...` model
+names. Prisma Client still handles board operations; agent models are excluded
+from Client with `@@ignore`, and the upcoming durable adapter will use `pg`.
+
+`prisma/migrations/20261002220000_agent_state/migration.sql` creates conversations,
+immutable transcript entries, execution tasks/checkpoints, submissions,
+documents/revisions, global ID claims and allocation/commit metadata. It does
+not alter `public.\"Task\"`, and no agent is wired to it yet. Its native PostgreSQL
+DDL is explicitly transactional and uses lossless JSON-encoded TEXT rather
+than JSONB for Pi records and arbitrary string identities.
+
+Run schema acceptance against real local PostgreSQL:
+
+```sh
+AGENT_SCHEMA_TEST_URL='postgresql://kanban:kanban@127.0.0.1:5433/kanban' bun run test:agent-schema
+```
+
+Tests deploy with the actual Prisma CLI into disposable scratch databases,
+including an existing-board case. They preserve the user's board. The normal
+`bun test` skips database tests unless the variable is supplied.
+
+See [the M1.2 walkthrough](docs/pi-m1.2.md) for table purposes, encoding/index
+choices, schema/version ownership, migration authoring and remaining adapter
+responsibilities.
 
 ## Where the future agent layer goes
 

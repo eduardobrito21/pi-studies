@@ -14,5 +14,17 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://kanban:kanban@postgres:5432/kanban?schema=public"
+    restart: "no"
+
 volumes:
   postgres_data:
