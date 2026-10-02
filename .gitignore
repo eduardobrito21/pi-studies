@@ -3,3 +3,7 @@ dist/
 server/generated/
 .env
 *.log
+
+
+# macos
+.DS_Store

@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "bun test",
     "test:agent-schema": "bun test tests/integration/agent-schema.test.ts",
+    "test:postgres-storage": "bun test tests/integration/postgres-storage.test.ts",
     "pi:smoke": "bun server/pi-smoke.ts",
     "pi:models": "bun server/pi-models.ts",
     "pi:check": "bun server/pi-models.ts --check",
