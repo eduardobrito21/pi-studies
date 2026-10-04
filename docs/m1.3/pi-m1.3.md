@@ -129,7 +129,7 @@ the **actual Prisma migration history**, and drops only that scratch database.
 The user's board/agent tables are never cleared or reset. Explicit invocation
 without the environment variable fails; ordinary `bun test` skips opt-in tests.
 
-M1.3 includes a deliberately bounded sample of seven unchanged installed-release
+M1.3 initially included a deliberately bounded sample of seven unchanged installed-release
 conformance cases: detached records, deep forks/head markers/pagination, task and
 submission scans, rewindable incarnations, independent copies, and current-only
 version transitions. Six adapter-specific tests cover:
@@ -144,12 +144,11 @@ version transitions. Six adapter-specific tests cover:
 - second-owner rejection, forced backend loss, explicit reopen and lock cleanup;
 - initialization failure cleanup for an unsupported format version.
 
-## Remaining M1.4 gate
+## M1.4 verification
 
-These tests are implementation evidence, **not a claim of full storage
-conformance**. M1.4 still needs to register/run every upstream case, broaden
-adapter-specific coverage (all post-close methods, more concurrent/failed mixed
-batches, address/hash collision checks and historical pagination), and verify
-ownership/resource cleanup after a real abrupt process exit, not just forced
-backend termination or graceful close. Storage correctness must pass that gate
-before wiring a Harness or making any real agent run.
+The initial M1.3 tests were implementation evidence, not full conformance.
+[M1.4](../m1.4/pi-m1.4.md) now runs all 23 installed-release conformance cases
+plus 14 PostgreSQL-specific tests, including every post-close method, forced hash
+collisions, historical pagination and real SIGKILL of the owning process.
+The same `test:postgres-storage` command runs that complete gate. No adapter or
+migration change was required, and no Harness or live model call is added.

@@ -184,10 +184,11 @@ POSTGRES_STORAGE_TEST_URL='postgresql://kanban:kanban@127.0.0.1:5433/kanban' bun
 ```
 
 These opt-in tests deploy migrations into disposable databases without resetting
-the user's board. They include seven installed-release conformance samples and
-six PostgreSQL-specific cases. Full conformance and abrupt-process-exit coverage
-remain M1.4. See [the M1.3 walkthrough](m1.3/pi-m1.3.md) for the ownership,
-transaction, encoding, document-history and cleanup design.
+the user's board. The M1.3 adapter is now verified by all 23 installed-release
+conformance cases and 14 PostgreSQL-specific cases, including real process-exit
+cleanup. See [the M1.3 walkthrough](m1.3/pi-m1.3.md) for the design and
+[the M1.4 walkthrough](m1.4/pi-m1.4.md) for the complete gate, test prerequisites,
+collision injection and deterministic crash tests.
 
 ## Where the future agent layer goes
 

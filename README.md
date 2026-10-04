@@ -29,6 +29,9 @@ PostgreSQL on **127.0.0.1:5433**. Database startup applies migrations automatica
 | [M1.2 — Visual walkthrough](docs/m1.2/pi-m1.2-study.html) | Interactive commit animation; open directly in a browser        |
 | [M1.3 — Storage adapter](docs/m1.3/pi-m1.3.md)            | Ownership, atomic commits, document history, and database tests |
 
+[M1.4 — Storage conformance](docs/m1.4/pi-m1.4.md) documents the full upstream
+suite and PostgreSQL crash, collision, and resource-cleanup tests.
+
 ## Key commands
 
 ```sh
@@ -39,7 +42,7 @@ bun run db:down     # Stop Postgres, keeping data
 bun run pi:smoke    # Offline scripted Pi compatibility check
 ```
 
-PostgreSQL integration tests are opt-in; see the M1.2 and M1.3 guides.
+PostgreSQL integration tests are opt-in; see the M1.2 and M1.4 guides.
 For migration authoring, model availability checks, and other commands, see the
 [project guide](docs/project-guide.md).
 
@@ -49,7 +52,8 @@ For migration authoring, model availability checks, and other commands, see the
 - Create, edit, delete, and drag cards between columns; no within-column reordering.
 - No accounts, authentication, or deployment setup.
 - Durable schema and PostgreSQL storage adapter exist, but the adapter is not
-  wired into a Harness or HTTP routes. Full storage conformance remains M1.4.
+  wired into a Harness or HTTP routes. All 23 pinned storage conformance cases
+  and 14 PostgreSQL-specific tests pass, including real process-crash cleanup.
 - No live-inference command or agent task tools yet. A model must be explicitly
   chosen before live inference; credentials stay in Pi's credential store.
 - Future agent tools must reuse `server/tasks.ts`, not raw SQL. The agent will
